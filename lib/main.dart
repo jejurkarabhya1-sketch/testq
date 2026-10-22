@@ -4,7 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:excel/excel.dart';
+import 'package:excel/excel.dart' hide Border;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:sqflite/sqflite.dart';
@@ -308,17 +308,444 @@ class Dashboard extends StatelessWidget {
 class PayrollScreen extends StatefulWidget {final int month,year;final String dept;final ValueChanged<String> onDept;final VoidCallback refresh;const PayrollScreen({super.key,required this.month,required this.year,required this.dept,required this.onDept,required this.refresh});@override State<PayrollScreen> createState()=>_PayrollScreenState();}
 class _PayrollScreenState extends State<PayrollScreen>{Future<List<Map<String,Object?>>> load()async{final all=await PayrollDb.instance.employees(activeOnly:true);final tax=await PayrollDb.instance.taxSettings();final days=DateTime(widget.year,widget.month+1,0).day;return all.where((e)=>e['department']==widget.dept).map((e)=>calculate(e,tax,days)).toList();} @override Widget build(BuildContext c)=>Column(children:[Padding(padding:const EdgeInsets.all(12),child:SegmentedButton<String>(segments:const [ButtonSegment(value:'ग्रामनिधी',label:Text('ग्रामनिधी')),ButtonSegment(value:'पाणी पुरवठा',label:Text('पाणी पुरवठा'))],selected:{widget.dept},onSelectionChanged:(v)=>widget.onDept(v.first))),Expanded(child:FutureBuilder<List<Map<String,Object?>>>(future:load(),builder:(c,s){if(!s.hasData)return const Center(child:CircularProgressIndicator());final rows=s.data!;final total=rows.fold<double>(0,(a,r)=>a+n(r['net']));if(rows.isEmpty)return const Center(child:Text('कर्मचारी नाहीत. कर्मचारी विभागातून नोंद जोडा.'));return Column(children:[Card(child:ListTile(title:const Text('एकूण निव्वळ वेतन'),trailing:Text(money(total),style:Theme.of(c).textTheme.titleLarge))),Expanded(child:ListView.builder(itemCount:rows.length,itemBuilder:(c,i){final r=rows[i];return Card(child:ExpansionTile(title:Text('${i+1}. ${r['name_marathi']??''}'),subtitle:Text('${r['designation']??''}  •  निव्वळ: ${money(r['net'])}'),children:[Padding(padding:const EdgeInsets.all(12),child:Column(children:[_line('मूळ वेतन',r['basic']),_line('एकूण वेतन',r['gross']),_line('वसुली',r['recovery_amount']),_line('व्यवसाय कर',r['professional_tax']),_line('एकूण वजाती',r['deductions']),_line('निव्वळ वेतन',r['net']),const SizedBox(height:8),Wrap(spacing:8,children:[FilledButton.icon(onPressed:()=>_edit(c,r),icon:const Icon(Icons.edit),label:const Text('वेतन बदला')),OutlinedButton.icon(onPressed:()=>_editEmployee(c,r),icon:const Icon(Icons.account_balance),label:const Text('बँक तपशील'))])]))]));}))]);}))]);}
 Widget _line(String k,Object? v)=>Padding(padding:const EdgeInsets.symmetric(vertical:3),child:Row(children:[Expanded(child:Text(k)),Text(money(v),style:const TextStyle(fontWeight:FontWeight.w600))]));
-Future<void> _edit(BuildContext context,Map<String,Object?> row)async{final fields=salaryFields.entries.toList();final ctrls={for(final e in fields)e.key:TextEditingController(text:'${row[e.key]??0}')};await showDialog(context:context,builder:(d)=>AlertDialog(title:Text('${row['name_marathi']} — वेतन'),content:SizedBox(width:420,child:SingleChildScrollView(child:Column(children:fields.map((e)=>Padding(padding:const EdgeInsets.only(bottom:8),child:TextField(controller:ctrls[e.key],keyboardType:TextInputType.number,decoration:InputDecoration(labelText:e.value))).toList()))),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('रद्द')),FilledButton(onPressed:()async{final patch=<String,Object?>{};for(final e in fields){patch[e.key]=double.tryParse(ctrls[e.key]!.text)??0;}await PayrollDb.instance.saveEmployee({...row,...patch});if(context.mounted)Navigator.pop(d);},child:const Text('जतन करा'))]));}
+Future<void> _edit(BuildContext context, Map<String, Object?> row) async {
+  final fields = salaryFields.entries.toList();
+  final controllers = <String, TextEditingController>{
+    for (final field in fields)
+      field.key: TextEditingController(text: '${row[field.key] ?? 0}'),
+  };
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: Text('${row['name_marathi']} — वेतन'),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: fields.map((field) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: TextField(
+                controller: controllers[field.key],
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(labelText: field.value),
+              ),
+            )).toList(),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext),
+          child: const Text('रद्द'),
+        ),
+        FilledButton(
+          onPressed: () async {
+            final patch = <String, Object?>{};
+            for (final field in fields) {
+              patch[field.key] = double.tryParse(controllers[field.key]!.text) ?? 0;
+            }
+            await PayrollDb.instance.saveEmployee({...row, ...patch});
+            if (context.mounted) Navigator.pop(dialogContext);
+          },
+          child: const Text('जतन करा'),
+        ),
+      ],
+    ),
+  );
+}
 Future<void> _editEmployee(BuildContext context,Map<String,Object?> row)async{final fields={'gram_salary_account':'ग्रामनिधी Salary Account','gram_salary_ifsc':'ग्रामनिधी Salary IFSC','gram_ppf_account':'ग्रामनिधी PPF Account','gram_ppf_ifsc':'ग्रामनिधी PPF IFSC','water_salary_account':'पाणी पुरवठा Salary Account','water_salary_ifsc':'पाणी पुरवठा Salary IFSC','water_ppf_account':'पाणी पुरवठा PPF Account','water_ppf_ifsc':'पाणी पुरवठा PPF IFSC'};final cs={for(final k in fields.keys)k:TextEditingController(text:'${row[k]??''}')};await showDialog(context:context,builder:(d)=>AlertDialog(title:const Text('बँक खाते तपशील'),content:SizedBox(width:420,child:SingleChildScrollView(child:Column(children:fields.entries.map((e)=>TextField(controller:cs[e.key],decoration:InputDecoration(labelText:e.value))).toList()))),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('रद्द')),FilledButton(onPressed:()async{await PayrollDb.instance.saveEmployee({...row,...{for(final k in fields.keys)k:cs[k]!.text}});if(context.mounted)Navigator.pop(d);},child:const Text('जतन करा'))]));}
+}
 
-class EmployeesScreen extends StatefulWidget {final VoidCallback refresh;const EmployeesScreen({super.key,required this.refresh});@override State<EmployeesScreen> createState()=>_EmployeesScreenState();}
-class _EmployeesScreenState extends State<EmployeesScreen>{String dept=departments.first;@override Widget build(BuildContext c)=>Column(children:[Padding(padding:const EdgeInsets.all(12),child:Row(children:[Expanded(child:DropdownButtonFormField(value:dept,items:departments.map((d)=>DropdownMenuItem(value:d,child:Text(d))).toList(),onChanged:(v)=>setState(()=>dept=v!),decoration:const InputDecoration(labelText:'विभाग'))),const SizedBox(width:10),FilledButton.icon(onPressed:()=>_form(c),icon:const Icon(Icons.person_add),label:const Text('नवीन'))])),Expanded(child:FutureBuilder<List<Map<String,Object?>>>(future:PayrollDb.instance.employees(),builder:(c,s){final rows=(s.data??[]).where((r)=>r['department']==dept).toList();return ListView.builder(itemCount:rows.length,itemBuilder:(c,i){final r=rows[i];return Card(child:ListTile(title:Text('${r['name_marathi']??''}'),subtitle:Text('${r['designation']??''} • ${r['gender']??'unspecified'} • ${r['is_active']==1?'सक्रिय':'निष्क्रिय'}'),onTap:()=>_form(c,existing:r),trailing:PopupMenuButton<String>(onSelected:(v)async{if(v=='disable')await PayrollDb.instance.deactivateEmployee(r['id'] as int);else await _form(c,existing:r);setState((){});},itemBuilder:(_)=>const [PopupMenuItem(value:'edit',child:Text('संपादित करा')),PopupMenuItem(value:'disable',child:Text('निष्क्रिय करा'))])));});}))]);Future<void> _form(BuildContext c,{Map<String,Object?>? existing})async{final fields=['name_marathi','name_english','designation','pay_scale','basic','leave_salary','substitution_salary','da','gender','dob','account_number','ifsc','bank','branch'];final labels=['नाव (मराठी)','नाव (English)','पद','वेतनश्रेणी','मूळ वेतन','रजा वेतन','स्थानार्पण वेतन','महागाई भत्ता','लिंग (male/female/unspecified)','जन्मतारीख (YYYY-MM-DD)','बँक खाते','IFSC','बँक','शाखा'];final cs={for(final k in fields)k:TextEditingController(text:'${existing?[k]??(k=='gender'?'unspecified':'')}')};String selected=existing?['department'] as String? ?? dept;await showDialog(context:c,builder:(d)=>AlertDialog(title:Text(existing==null?'कर्मचारी जोडा':'कर्मचारी संपादित करा'),content:SizedBox(width:460,child:SingleChildScrollView(child:Column(children:[DropdownButtonFormField(value:selected,items:departments.map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),onChanged:(v)=>selected=v!,decoration:const InputDecoration(labelText:'विभाग')),...List.generate(fields.length,(i)=>Padding(padding:const EdgeInsets.only(top:8),child:TextField(controller:cs[fields[i]],keyboardType:['basic','leave_salary','substitution_salary','da'].contains(fields[i])?TextInputType.number:TextInputType.text,decoration:InputDecoration(labelText:labels[i]))))]))),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('रद्द')),FilledButton(onPressed:()async{final v=<String,Object?>{for(final k in fields)k:cs[k]!.text};for(final k in ['basic','leave_salary','substitution_salary','da'])v[k]=double.tryParse('${v[k]}')??0;v.addAll({'department':selected,'is_active':1,'living_enabled':1,'gp_enabled':1,'sort_order':0});if(existing!=null)v['id']=existing['id'];await PayrollDb.instance.saveEmployee(v);if(c.mounted){Navigator.pop(d);setState((){});}},child:const Text('जतन करा'))]));}
+class EmployeesScreen extends StatefulWidget {
+  final VoidCallback refresh;
+  const EmployeesScreen({super.key, required this.refresh});
+  @override
+  State<EmployeesScreen> createState() => _EmployeesScreenState();
+}
 
-class DailyScreen extends StatefulWidget{final int month,year;final VoidCallback refresh;const DailyScreen({super.key,required this.month,required this.year,required this.refresh});@override State<DailyScreen> createState()=>_DailyScreenState();}
-class _DailyScreenState extends State<DailyScreen>{@override Widget build(BuildContext c)=>Column(children:[Padding(padding:const EdgeInsets.all(12),child:Row(children:[const Expanded(child:Text('रोजंदार वेतन',style:TextStyle(fontSize:20,fontWeight:FontWeight.bold))),FilledButton.icon(onPressed:()=>_add(c),icon:const Icon(Icons.add),label:const Text('कर्मचारी जोडा'))])),Expanded(child:FutureBuilder<List<Map<String,Object?>>>(future:PayrollDb.instance.dailyRows(widget.month,widget.year),builder:(c,s){if(!s.hasData)return const Center(child:CircularProgressIndicator());final rows=s.data!;return ListView(children:[Card(child:ListTile(title:Text('महिन्याचे दिवस: ${DateTime(widget.year,widget.month+1,0).day}'),subtitle:Text('${widget.month}/${widget.year}'))),...rows.map((r)=>Card(child:ExpansionTile(title:Text('${r['name']}'),subtitle:Text('${r['employee_type']} • निव्वळ ${money(r['net'])}'),children:[Padding(padding:const EdgeInsets.all(12),child:Column(children:[_line('एकूण वेतन',r['gross']),_line('वसुली',r['recovery']),_line('निव्वळ वेतन',r['net']),Row(children:[Expanded(child:TextButton(onPressed:()=>_cell(c,r,'daily_rate','दैनिक दर'),child:Text('दर: ${money(r['daily_rate'])}'))),Expanded(child:TextButton(onPressed:()=>_cell(c,r,'absent_days','अनुपस्थित दिवस'),child:Text('गैरहजर: ${r['absent_days']}')))])]))]))]) ;}))]);Future<void> _cell(BuildContext c,Map<String,Object?> r,String field,String label)async{final ctl=TextEditingController(text:'${r[field]}');await showDialog(context:c,builder:(d)=>AlertDialog(title:Text(label),content:TextField(controller:ctl,keyboardType:TextInputType.number),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('रद्द')),FilledButton(onPressed:()async{final v=double.tryParse(ctl.text)??0;await PayrollDb.instance.saveDailyCell(r['id'] as int,widget.month,widget.year,field,v);if(c.mounted){Navigator.pop(d);setState((){});}},child:const Text('जतन करा'))]));}Future<void> _add(BuildContext c)async{final name=TextEditingController(),acc=TextEditingController(),ifsc=TextEditingController(),bank=TextEditingController(),branch=TextEditingController();String type='इतर';await showDialog(context:c,builder:(d)=>AlertDialog(title:const Text('रोजंदार कर्मचारी'),content:SizedBox(width:420,child:SingleChildScrollView(child:Column(children:[for(final e in {'नाव':name,'खाते क्रमांक':acc,'IFSC':ifsc,'बँक':bank,'शाखा':branch}.entries)Padding(padding:const EdgeInsets.only(bottom:8),child:TextField(controller:e.value,decoration:InputDecoration(labelText:e.key))),DropdownButtonFormField(value:type,items:['शौचालय कर्मचारी','वाहनचालक','इतर'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),onChanged:(v)=>type=v!)]))),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('रद्द')),FilledButton(onPressed:()async{if(name.text.trim().isEmpty||acc.text.trim().isEmpty||ifsc.text.length!=11)return;await PayrollDb.instance.saveDailyEmployee({'name':name.text.trim(),'account_number':acc.text.trim(),'ifsc':ifsc.text.toUpperCase(),'bank_name':bank.text,'branch':branch.text,'employee_type':type,'is_active':1});if(c.mounted){Navigator.pop(d);setState((){});}},child:const Text('जतन करा'))]));}}
+class _EmployeesScreenState extends State<EmployeesScreen> {
+  String dept = departments.first;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: dept,
+                  items: departments.map((value) => DropdownMenuItem<String>(
+                    value: value,
+                    child: Text(value),
+                  )).toList(),
+                  onChanged: (value) {
+                    if (value != null) setState(() => dept = value);
+                  },
+                  decoration: const InputDecoration(labelText: 'विभाग'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              FilledButton.icon(
+                onPressed: () => _form(context),
+                icon: const Icon(Icons.person_add),
+                label: const Text('नवीन'),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: FutureBuilder<List<Map<String, Object?>>>(
+            future: PayrollDb.instance.employees(),
+            builder: (context, snapshot) {
+              final rows = (snapshot.data ?? [])
+                  .where((row) => row['department'] == dept)
+                  .toList();
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (rows.isEmpty) {
+                return const Center(child: Text('या विभागात कर्मचारी नाहीत.'));
+              }
+              return ListView.builder(
+                itemCount: rows.length,
+                itemBuilder: (context, index) {
+                  final row = rows[index];
+                  return Card(
+                    child: ListTile(
+                      title: Text('${row['name_marathi'] ?? ''}'),
+                      subtitle: Text(
+                        "${row['designation'] ?? ''} • ${row['gender'] ?? 'unspecified'} • ${row['is_active'] == 1 ? 'सक्रिय' : 'निष्क्रिय'}",
+                      ),
+                      onTap: () => _form(context, existing: row),
+                      trailing: PopupMenuButton<String>(
+                        onSelected: (value) async {
+                          if (value == 'disable') {
+                            await PayrollDb.instance.deactivateEmployee(row['id'] as int);
+                          } else {
+                            await _form(context, existing: row);
+                          }
+                          if (mounted) {
+                            setState(() {});
+                            widget.refresh();
+                          }
+                        },
+                        itemBuilder: (_) => const [
+                          PopupMenuItem(value: 'edit', child: Text('संपादित करा')),
+                          PopupMenuItem(value: 'disable', child: Text('निष्क्रिय करा')),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _form(BuildContext context, {Map<String, Object?>? existing}) async {
+    final fields = <String>[
+      'name_marathi', 'name_english', 'designation', 'pay_scale', 'basic',
+      'leave_salary', 'substitution_salary', 'da', 'gender', 'dob',
+      'account_number', 'ifsc', 'bank', 'branch',
+    ];
+    final labels = <String>[
+      'नाव (मराठी)', 'नाव (English)', 'पद', 'वेतनश्रेणी', 'मूळ वेतन',
+      'रजा वेतन', 'स्थानार्पण वेतन', 'महागाई भत्ता',
+      'लिंग (male/female/unspecified)', 'जन्मतारीख (YYYY-MM-DD)',
+      'बँक खाते', 'IFSC', 'बँक', 'शाखा',
+    ];
+    final controllers = <String, TextEditingController>{
+      for (final key in fields)
+        key: TextEditingController(
+          text: '${existing?[key] ?? (key == 'gender' ? 'unspecified' : '')}',
+        ),
+    };
+    String selectedDepartment = existing?['department'] as String? ?? dept;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(existing == null ? 'कर्मचारी जोडा' : 'कर्मचारी संपादित करा'),
+        content: SizedBox(
+          width: 460,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<String>(
+                  initialValue: selectedDepartment,
+                  items: departments.map((value) => DropdownMenuItem<String>(
+                    value: value,
+                    child: Text(value),
+                  )).toList(),
+                  onChanged: (value) {
+                    if (value != null) selectedDepartment = value;
+                  },
+                  decoration: const InputDecoration(labelText: 'विभाग'),
+                ),
+                ...List.generate(fields.length, (index) => Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: TextField(
+                    controller: controllers[fields[index]],
+                    keyboardType: ['basic', 'leave_salary', 'substitution_salary', 'da']
+                            .contains(fields[index])
+                        ? TextInputType.number
+                        : TextInputType.text,
+                    decoration: InputDecoration(labelText: labels[index]),
+                  ),
+                )),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('रद्द'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final values = <String, Object?>{
+                for (final key in fields) key: controllers[key]!.text,
+              };
+              for (final key in ['basic', 'leave_salary', 'substitution_salary', 'da']) {
+                values[key] = double.tryParse('${values[key]}') ?? 0;
+              }
+              values.addAll({
+                'department': selectedDepartment,
+                'is_active': 1,
+                'living_enabled': 1,
+                'gp_enabled': 1,
+                'sort_order': 0,
+              });
+              if (existing != null) values['id'] = existing['id'];
+              await PayrollDb.instance.saveEmployee(values);
+              if (context.mounted) {
+                Navigator.pop(dialogContext);
+                setState(() {});
+                widget.refresh();
+              }
+            },
+            child: const Text('जतन करा'),
+          ),
+        ],
+      ),
+    );
+    for (final controller in controllers.values) {
+      controller.dispose();
+    }
+  }
+}
+
+class DailyScreen extends StatefulWidget {
+  final int month;
+  final int year;
+  final VoidCallback refresh;
+  const DailyScreen({super.key, required this.month, required this.year, required this.refresh});
+  @override
+  State<DailyScreen> createState() => _DailyScreenState();
+}
+
+class _DailyScreenState extends State<DailyScreen> {
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              const Expanded(
+                child: Text('रोजंदार वेतन', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+              ),
+              FilledButton.icon(
+                onPressed: () => _add(context),
+                icon: const Icon(Icons.add),
+                label: const Text('कर्मचारी जोडा'),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: FutureBuilder<List<Map<String, Object?>>>(
+            future: PayrollDb.instance.dailyRows(widget.month, widget.year),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              final rows = snapshot.data ?? [];
+              return ListView(
+                children: [
+                  Card(
+                    child: ListTile(
+                      title: Text('महिन्याचे दिवस: ${DateTime(widget.year, widget.month + 1, 0).day}'),
+                      subtitle: Text('${widget.month}/${widget.year}'),
+                    ),
+                  ),
+                  ...rows.map((row) => Card(
+                    child: ExpansionTile(
+                      title: Text('${row['name'] ?? ''}'),
+                      subtitle: Text('${row['employee_type'] ?? ''} • निव्वळ ${money(row['net'])}'),
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            children: [
+                              _line('एकूण वेतन', row['gross']),
+                              _line('वसुली', row['recovery']),
+                              _line('निव्वळ वेतन', row['net']),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: TextButton(
+                                      onPressed: () => _cell(context, row, 'daily_rate', 'दैनिक दर'),
+                                      child: Text('दर: ${money(row['daily_rate'])}'),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: TextButton(
+                                      onPressed: () => _cell(context, row, 'absent_days', 'अनुपस्थित दिवस'),
+                                      child: Text('गैरहजर: ${row['absent_days']}'),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  )),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _cell(BuildContext context, Map<String, Object?> row, String field, String label) async {
+    final controller = TextEditingController(text: '${row[field] ?? 0}');
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(label),
+        content: TextField(controller: controller, keyboardType: TextInputType.number),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('रद्द')),
+          FilledButton(
+            onPressed: () async {
+              final value = double.tryParse(controller.text) ?? 0;
+              await PayrollDb.instance.saveDailyCell(row['id'] as int, widget.month, widget.year, field, value);
+              if (context.mounted) {
+                Navigator.pop(dialogContext);
+                setState(() {});
+                widget.refresh();
+              }
+            },
+            child: const Text('जतन करा'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+  }
+
+  Future<void> _add(BuildContext context) async {
+    final name = TextEditingController();
+    final account = TextEditingController();
+    final ifsc = TextEditingController();
+    final bank = TextEditingController();
+    final branch = TextEditingController();
+    String type = 'इतर';
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('रोजंदार कर्मचारी'),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (final entry in <String, TextEditingController>{
+                    'नाव': name,
+                    'खाते क्रमांक': account,
+                    'IFSC': ifsc,
+                    'बँक': bank,
+                    'शाखा': branch,
+                  }.entries)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: TextField(
+                        controller: entry.value,
+                        decoration: InputDecoration(labelText: entry.key),
+                      ),
+                    ),
+                  DropdownButtonFormField<String>(
+                    initialValue: type,
+                    items: ['शौचालय कर्मचारी', 'वाहनचालक', 'इतर'].map((value) => DropdownMenuItem<String>(
+                      value: value,
+                      child: Text(value),
+                    )).toList(),
+                    onChanged: (value) {
+                      if (value != null) setDialogState(() => type = value);
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('रद्द')),
+            FilledButton(
+              onPressed: () async {
+                if (name.text.trim().isEmpty || account.text.trim().isEmpty || ifsc.text.trim().length != 11) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('नाव, खाते क्रमांक आणि 11 अक्षरी IFSC तपासा.')),
+                  );
+                  return;
+                }
+                await PayrollDb.instance.saveDailyEmployee({
+                  'name': name.text.trim(),
+                  'account_number': account.text.trim(),
+                  'ifsc': ifsc.text.trim().toUpperCase(),
+                  'bank_name': bank.text.trim(),
+                  'branch': branch.text.trim(),
+                  'employee_type': type,
+                  'is_active': 1,
+                });
+                if (context.mounted) {
+                  Navigator.pop(dialogContext);
+                  setState(() {});
+                  widget.refresh();
+                }
+              },
+              child: const Text('जतन करा'),
+            ),
+          ],
+        ),
+      ),
+    );
+    name.dispose();
+    account.dispose();
+    ifsc.dispose();
+    bank.dispose();
+    branch.dispose();
+  }
+}
 
 class ReportsScreen extends StatelessWidget{final int month,year;const ReportsScreen({super.key,required this.month,required this.year});@override Widget build(BuildContext c)=>ListView(padding:const EdgeInsets.all(16),children:[Text('अहवाल आणि निर्यात',style:Theme.of(c).textTheme.headlineSmall),const SizedBox(height:12),Card(child:ListTile(leading:const Icon(Icons.table_chart),title:const Text('Excel वेतन अहवाल'),subtitle:const Text('निवडलेल्या महिन्याची कर्मचारी व निव्वळ वेतन यादी'),trailing:const Icon(Icons.download),onTap:()=>_excel(c,month,year))),Card(child:ListTile(leading:const Icon(Icons.picture_as_pdf),title:const Text('PDF वेतन सारांश'),subtitle:const Text('प्रिंट किंवा PDF म्हणून जतन करा'),trailing:const Icon(Icons.print),onTap:()=>_pdf(c,month,year))),Card(child:ListTile(leading:const Icon(Icons.email_outlined),title:const Text('ईमेलने वेतन Excel पाठवा'),subtitle:Text('${monthNames[month-1]} $year चा Excel अहवाल संलग्न होईल'),trailing:const Icon(Icons.send_rounded),onTap:()=>_sendSalaryEmail(c,month,year))),Card(child:ListTile(leading:const Icon(Icons.backup),title:const Text('डेटाबेस बॅकअप'),subtitle:const Text('स्थानिक payroll.db फाईल शेअर करा'),onTap:()=>_backup(c))),const Padding(padding:EdgeInsets.all(12),child:Text('ईमेल पाठवण्यासाठी आधी सेटिंग्जमध्ये Gmail From, To आणि App Password जतन करा. SMTP सर्व्हरने स्वीकारल्यावरच यशाचा संदेश दिसेल. मूळ डेस्कटॉप अॅपमधील सहा पूर्ण स्वरूपित शीट्स व प्रिंट रजिस्टर अजून parity तपासणीमध्ये आहेत.'))]);}
-Future<File> _createSalaryWorkbookFile(int m,int y)async{final all=await PayrollDb.instance.employees(activeOnly:true);final tax=await PayrollDb.instance.taxSettings();final rows=all.map((r)=>calculate(r,tax,DateTime(y,m+1,0).day)).toList();final excel=Excel.createExcel();final sheet=excel['वेतन'];sheet.appendRow(['अ.नं.','नाव','पद','विभाग','मूळ वेतन','एकूण वेतन','वजाती','निव्वळ वेतन']);for(var i=0;i<rows.length;i++){final r=rows[i];sheet.appendRow([IntCellValue(i+1),TextCellValue('${r['name_marathi']??''}'),TextCellValue('${r['designation']??''}'),TextCellValue('${r['department']??''}'),DoubleCellValue(n(r['basic'])),DoubleCellValue(n(r['gross'])),DoubleCellValue(n(r['deductions'])),DoubleCellValue(n(r['net']))]);}final bytes=excel.encode();if(bytes==null)throw StateError('Excel workbook तयार करता आला नाही.');final dir=await getTemporaryDirectory();final file=File('${dir.path}/Lasalgaon_Grampanchayat_Salary_${m}_$y.xlsx');await file.writeAsBytes(bytes,flush:true);return file;}
+Future<File> _createSalaryWorkbookFile(int m,int y)async{final all=await PayrollDb.instance.employees(activeOnly:true);final tax=await PayrollDb.instance.taxSettings();final rows=all.map((r)=>calculate(r,tax,DateTime(y,m+1,0).day)).toList();final excel=Excel.createExcel();final sheet=excel['वेतन'];sheet.appendRow([TextCellValue('अ.नं.'),TextCellValue('नाव'),TextCellValue('पद'),TextCellValue('विभाग'),TextCellValue('मूळ वेतन'),TextCellValue('एकूण वेतन'),TextCellValue('वजाती'),TextCellValue('निव्वळ वेतन')]);for(var i=0;i<rows.length;i++){final r=rows[i];sheet.appendRow([IntCellValue(i+1),TextCellValue('${r['name_marathi']??''}'),TextCellValue('${r['designation']??''}'),TextCellValue('${r['department']??''}'),DoubleCellValue(n(r['basic'])),DoubleCellValue(n(r['gross'])),DoubleCellValue(n(r['deductions'])),DoubleCellValue(n(r['net']))]);}final bytes=excel.encode();if(bytes==null)throw StateError('Excel workbook तयार करता आला नाही.');final dir=await getTemporaryDirectory();final file=File('${dir.path}/Lasalgaon_Grampanchayat_Salary_${m}_$y.xlsx');await file.writeAsBytes(bytes,flush:true);return file;}
 Future<void> _excel(BuildContext c,int m,int y)async{try{final file=await _createSalaryWorkbookFile(m,y);await Share.shareXFiles([XFile(file.path)],text:'लासलगाव ग्रामपंचायत वेतन $m/$y');}catch(e){if(c.mounted)ScaffoldMessenger.of(c).showSnackBar(SnackBar(content:Text('Excel तयार करता आले नाही: $e')));}}
 Future<void> _sendSalaryEmail(BuildContext c,int m,int y)async{final prefs=await SharedPreferences.getInstance();final from=(prefs.getString('smtp_from_email')??'').trim();final to=(prefs.getString('smtp_to_email')??'').trim();const secure=FlutterSecureStorage();final password=(await secure.read(key:'smtp_app_password')??'').replaceAll(' ','').trim();if(from.isEmpty||to.isEmpty||password.isEmpty){if(c.mounted)ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content:Text('ईमेल सेटिंग अपूर्ण आहे. सेटिंग्जमध्ये From, To आणि Gmail App Password जतन करा.')));return;}if(!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(from)||!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(to)){if(c.mounted)ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content:Text('From आणि To ईमेल पत्ते तपासा.')));return;}showDialog<void>(context:c,barrierDismissible:false,builder:(_)=>const AlertDialog(content:Row(children:[CircularProgressIndicator(),SizedBox(width:16),Expanded(child:Text('वेतन Excel तयार करून ईमेल पाठवत आहे...'))])));try{final file=await _createSalaryWorkbookFile(m,y);final server=SmtpServer('smtp.gmail.com',port:587,username:from,password:password,ssl:false,allowInsecure:false);final message=Message()..from=Address(from,'Lasalgaon Gram Panchayat')..recipients.add(to)..subject='Lasalgaon Gram Panchayat Salary ${monthNames[m-1]} $y'..text='नमस्कार,\n\nलासलगाव ग्रामपंचायतीच्या ${monthNames[m-1]} $y महिन्याच्या वेतनाची Excel नोंद संलग्न केली आहे.\n\nलासलगाव ग्रामपंचायत'..attachments.add(FileAttachment(file));await send(message,server);if(c.mounted)Navigator.of(c,rootNavigator:true).pop();if(c.mounted)ScaffoldMessenger.of(c).showSnackBar(SnackBar(content:Text('ईमेल SMTP सर्व्हरने स्वीकारला: $to')));}catch(e){if(c.mounted)Navigator.of(c,rootNavigator:true).pop();if(c.mounted)ScaffoldMessenger.of(c).showSnackBar(SnackBar(content:Text('ईमेल पाठवता आला नाही: ${_emailError(e)}'),duration:const Duration(seconds:8)));}}
 String _emailError(Object e){final s=e.toString();if(s.contains('535')||s.toLowerCase().contains('authentication'))return 'Gmail authentication अयशस्वी. Gmail मध्ये 2-Step Verification सुरू करून नवीन 16-अक्षरी App Password वापरा. ($s)';if(s.contains('SocketException')||s.contains('Connection timed out'))return 'नेटवर्क किंवा SMTP कनेक्शन अयशस्वी. इंटरनेट तपासा आणि पुन्हा प्रयत्न करा. ($s)';return s;}
