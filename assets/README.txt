@@ -1,0 +1,1 @@
+Optional Lasalgaon Gram Panchayat branding assets can be added here. The source archive logo is not embedded in this starter to avoid accidental bundling of private payroll data.
