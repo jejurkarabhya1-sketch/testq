@@ -8,6 +8,10 @@ import 'package:excel/excel.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:mailer/mailer.dart';
+import 'package:mailer/smtp_server.dart';
 import 'database.dart';
 
 void main() => runApp(const LasalgaonApp());
@@ -313,13 +317,130 @@ class _EmployeesScreenState extends State<EmployeesScreen>{String dept=departmen
 class DailyScreen extends StatefulWidget{final int month,year;final VoidCallback refresh;const DailyScreen({super.key,required this.month,required this.year,required this.refresh});@override State<DailyScreen> createState()=>_DailyScreenState();}
 class _DailyScreenState extends State<DailyScreen>{@override Widget build(BuildContext c)=>Column(children:[Padding(padding:const EdgeInsets.all(12),child:Row(children:[const Expanded(child:Text('रोजंदार वेतन',style:TextStyle(fontSize:20,fontWeight:FontWeight.bold))),FilledButton.icon(onPressed:()=>_add(c),icon:const Icon(Icons.add),label:const Text('कर्मचारी जोडा'))])),Expanded(child:FutureBuilder<List<Map<String,Object?>>>(future:PayrollDb.instance.dailyRows(widget.month,widget.year),builder:(c,s){if(!s.hasData)return const Center(child:CircularProgressIndicator());final rows=s.data!;return ListView(children:[Card(child:ListTile(title:Text('महिन्याचे दिवस: ${DateTime(widget.year,widget.month+1,0).day}'),subtitle:Text('${widget.month}/${widget.year}'))),...rows.map((r)=>Card(child:ExpansionTile(title:Text('${r['name']}'),subtitle:Text('${r['employee_type']} • निव्वळ ${money(r['net'])}'),children:[Padding(padding:const EdgeInsets.all(12),child:Column(children:[_line('एकूण वेतन',r['gross']),_line('वसुली',r['recovery']),_line('निव्वळ वेतन',r['net']),Row(children:[Expanded(child:TextButton(onPressed:()=>_cell(c,r,'daily_rate','दैनिक दर'),child:Text('दर: ${money(r['daily_rate'])}'))),Expanded(child:TextButton(onPressed:()=>_cell(c,r,'absent_days','अनुपस्थित दिवस'),child:Text('गैरहजर: ${r['absent_days']}')))])]))]))]) ;}))]);Future<void> _cell(BuildContext c,Map<String,Object?> r,String field,String label)async{final ctl=TextEditingController(text:'${r[field]}');await showDialog(context:c,builder:(d)=>AlertDialog(title:Text(label),content:TextField(controller:ctl,keyboardType:TextInputType.number),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('रद्द')),FilledButton(onPressed:()async{final v=double.tryParse(ctl.text)??0;await PayrollDb.instance.saveDailyCell(r['id'] as int,widget.month,widget.year,field,v);if(c.mounted){Navigator.pop(d);setState((){});}},child:const Text('जतन करा'))]));}Future<void> _add(BuildContext c)async{final name=TextEditingController(),acc=TextEditingController(),ifsc=TextEditingController(),bank=TextEditingController(),branch=TextEditingController();String type='इतर';await showDialog(context:c,builder:(d)=>AlertDialog(title:const Text('रोजंदार कर्मचारी'),content:SizedBox(width:420,child:SingleChildScrollView(child:Column(children:[for(final e in {'नाव':name,'खाते क्रमांक':acc,'IFSC':ifsc,'बँक':bank,'शाखा':branch}.entries)Padding(padding:const EdgeInsets.only(bottom:8),child:TextField(controller:e.value,decoration:InputDecoration(labelText:e.key))),DropdownButtonFormField(value:type,items:['शौचालय कर्मचारी','वाहनचालक','इतर'].map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),onChanged:(v)=>type=v!)]))),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('रद्द')),FilledButton(onPressed:()async{if(name.text.trim().isEmpty||acc.text.trim().isEmpty||ifsc.text.length!=11)return;await PayrollDb.instance.saveDailyEmployee({'name':name.text.trim(),'account_number':acc.text.trim(),'ifsc':ifsc.text.toUpperCase(),'bank_name':bank.text,'branch':branch.text,'employee_type':type,'is_active':1});if(c.mounted){Navigator.pop(d);setState((){});}},child:const Text('जतन करा'))]));}}
 
-class ReportsScreen extends StatelessWidget{final int month,year;const ReportsScreen({super.key,required this.month,required this.year});@override Widget build(BuildContext c)=>ListView(padding:const EdgeInsets.all(16),children:[Text('अहवाल आणि निर्यात',style:Theme.of(c).textTheme.headlineSmall),const SizedBox(height:12),Card(child:ListTile(leading:const Icon(Icons.table_chart),title:const Text('Excel वेतन अहवाल'),subtitle:const Text('निवडलेल्या महिन्याची कर्मचारी व निव्वळ वेतन यादी'),trailing:const Icon(Icons.download),onTap:()=>_excel(c,month,year))),Card(child:ListTile(leading:const Icon(Icons.picture_as_pdf),title:const Text('PDF वेतन सारांश'),subtitle:const Text('प्रिंट किंवा PDF म्हणून जतन करा'),trailing:const Icon(Icons.print),onTap:()=>_pdf(c,month,year))),Card(child:ListTile(leading:const Icon(Icons.backup),title:const Text('डेटाबेस बॅकअप'),subtitle:const Text('स्थानिक payroll.db फाईल शेअर करा'),onTap:()=>_backup(c))),const Padding(padding:EdgeInsets.all(12),child:Text('या आवृत्तीत Excel/PDF सारांश उपलब्ध आहे. मूळ डेस्कटॉप अॅपमधील सहा पूर्ण स्वरूपित शीट्स, ईमेल SMTP आणि प्रिंट रजिस्टरचे पूर्ण स्वरूप अजून parity तपासणीमध्ये आहेत.'))]);
-Future<void> _excel(BuildContext c,int m,int y)async{final all=await PayrollDb.instance.employees(activeOnly:true);final tax=await PayrollDb.instance.taxSettings();final rows=all.map((r)=>calculate(r,tax,DateTime(y,m+1,0).day)).toList();final excel=Excel.createExcel();final sheet=excel['वेतन'];sheet.appendRow(['अ.नं.','नाव','पद','विभाग','मूळ वेतन','एकूण वेतन','वजाती','निव्वळ वेतन']);for(var i=0;i<rows.length;i++){final r=rows[i];sheet.appendRow([IntCellValue(i+1),TextCellValue('${r['name_marathi']??''}'),TextCellValue('${r['designation']??''}'),TextCellValue('${r['department']??''}'),DoubleCellValue(n(r['basic'])),DoubleCellValue(n(r['gross'])),DoubleCellValue(n(r['deductions'])),DoubleCellValue(n(r['net']))]);}final bytes=excel.encode();if(bytes==null)return;final dir=await getTemporaryDirectory();final file=File('${dir.path}/Lasalgaon_Salary_${m}_$y.xlsx');await file.writeAsBytes(bytes);await Share.shareXFiles([XFile(file.path)],text:'लासलगाव ग्रामपंचायत वेतन $m/$y');}
+class ReportsScreen extends StatelessWidget{final int month,year;const ReportsScreen({super.key,required this.month,required this.year});@override Widget build(BuildContext c)=>ListView(padding:const EdgeInsets.all(16),children:[Text('अहवाल आणि निर्यात',style:Theme.of(c).textTheme.headlineSmall),const SizedBox(height:12),Card(child:ListTile(leading:const Icon(Icons.table_chart),title:const Text('Excel वेतन अहवाल'),subtitle:const Text('निवडलेल्या महिन्याची कर्मचारी व निव्वळ वेतन यादी'),trailing:const Icon(Icons.download),onTap:()=>_excel(c,month,year))),Card(child:ListTile(leading:const Icon(Icons.picture_as_pdf),title:const Text('PDF वेतन सारांश'),subtitle:const Text('प्रिंट किंवा PDF म्हणून जतन करा'),trailing:const Icon(Icons.print),onTap:()=>_pdf(c,month,year))),Card(child:ListTile(leading:const Icon(Icons.email_outlined),title:const Text('ईमेलने वेतन Excel पाठवा'),subtitle:Text('${monthNames[month-1]} $year चा Excel अहवाल संलग्न होईल'),trailing:const Icon(Icons.send_rounded),onTap:()=>_sendSalaryEmail(c,month,year))),Card(child:ListTile(leading:const Icon(Icons.backup),title:const Text('डेटाबेस बॅकअप'),subtitle:const Text('स्थानिक payroll.db फाईल शेअर करा'),onTap:()=>_backup(c))),const Padding(padding:EdgeInsets.all(12),child:Text('ईमेल पाठवण्यासाठी आधी सेटिंग्जमध्ये Gmail From, To आणि App Password जतन करा. SMTP सर्व्हरने स्वीकारल्यावरच यशाचा संदेश दिसेल. मूळ डेस्कटॉप अॅपमधील सहा पूर्ण स्वरूपित शीट्स व प्रिंट रजिस्टर अजून parity तपासणीमध्ये आहेत.'))]);
+Future<File> _createSalaryWorkbookFile(int m,int y)async{final all=await PayrollDb.instance.employees(activeOnly:true);final tax=await PayrollDb.instance.taxSettings();final rows=all.map((r)=>calculate(r,tax,DateTime(y,m+1,0).day)).toList();final excel=Excel.createExcel();final sheet=excel['वेतन'];sheet.appendRow(['अ.नं.','नाव','पद','विभाग','मूळ वेतन','एकूण वेतन','वजाती','निव्वळ वेतन']);for(var i=0;i<rows.length;i++){final r=rows[i];sheet.appendRow([IntCellValue(i+1),TextCellValue('${r['name_marathi']??''}'),TextCellValue('${r['designation']??''}'),TextCellValue('${r['department']??''}'),DoubleCellValue(n(r['basic'])),DoubleCellValue(n(r['gross'])),DoubleCellValue(n(r['deductions'])),DoubleCellValue(n(r['net']))]);}final bytes=excel.encode();if(bytes==null)throw StateError('Excel workbook तयार करता आला नाही.');final dir=await getTemporaryDirectory();final file=File('${dir.path}/Lasalgaon_Grampanchayat_Salary_${m}_$y.xlsx');await file.writeAsBytes(bytes,flush:true);return file;}
+Future<void> _excel(BuildContext c,int m,int y)async{try{final file=await _createSalaryWorkbookFile(m,y);await Share.shareXFiles([XFile(file.path)],text:'लासलगाव ग्रामपंचायत वेतन $m/$y');}catch(e){if(c.mounted)ScaffoldMessenger.of(c).showSnackBar(SnackBar(content:Text('Excel तयार करता आले नाही: $e')));}}
+Future<void> _sendSalaryEmail(BuildContext c,int m,int y)async{final prefs=await SharedPreferences.getInstance();final from=(prefs.getString('smtp_from_email')??'').trim();final to=(prefs.getString('smtp_to_email')??'').trim();const secure=FlutterSecureStorage();final password=(await secure.read(key:'smtp_app_password')??'').replaceAll(' ','').trim();if(from.isEmpty||to.isEmpty||password.isEmpty){if(c.mounted)ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content:Text('ईमेल सेटिंग अपूर्ण आहे. सेटिंग्जमध्ये From, To आणि Gmail App Password जतन करा.')));return;}if(!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(from)||!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(to)){if(c.mounted)ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content:Text('From आणि To ईमेल पत्ते तपासा.')));return;}showDialog<void>(context:c,barrierDismissible:false,builder:(_)=>const AlertDialog(content:Row(children:[CircularProgressIndicator(),SizedBox(width:16),Expanded(child:Text('वेतन Excel तयार करून ईमेल पाठवत आहे...'))])));try{final file=await _createSalaryWorkbookFile(m,y);final server=SmtpServer('smtp.gmail.com',port:587,username:from,password:password,ssl:false,allowInsecure:false);final message=Message()..from=Address(from,'Lasalgaon Gram Panchayat')..recipients.add(to)..subject='Lasalgaon Gram Panchayat Salary ${monthNames[m-1]} $y'..text='नमस्कार,\n\nलासलगाव ग्रामपंचायतीच्या ${monthNames[m-1]} $y महिन्याच्या वेतनाची Excel नोंद संलग्न केली आहे.\n\nलासलगाव ग्रामपंचायत'..attachments.add(FileAttachment(file));final refused=await send(message,server);if(refused.isNotEmpty)throw StateError('SMTP ने recipient स्वीकारला नाही: ${refused.join(', ')}');if(c.mounted)Navigator.of(c,rootNavigator:true).pop();if(c.mounted)ScaffoldMessenger.of(c).showSnackBar(SnackBar(content:Text('ईमेल SMTP सर्व्हरने स्वीकारला: $to')));}catch(e){if(c.mounted)Navigator.of(c,rootNavigator:true).pop();if(c.mounted)ScaffoldMessenger.of(c).showSnackBar(SnackBar(content:Text('ईमेल पाठवता आला नाही: ${_emailError(e)}'),duration:const Duration(seconds:8)));}}
+String _emailError(Object e){final s=e.toString();if(s.contains('535')||s.toLowerCase().contains('authentication'))return 'Gmail authentication अयशस्वी. Gmail मध्ये 2-Step Verification सुरू करून नवीन 16-अक्षरी App Password वापरा. ($s)';if(s.contains('SocketException')||s.contains('Connection timed out'))return 'नेटवर्क किंवा SMTP कनेक्शन अयशस्वी. इंटरनेट तपासा आणि पुन्हा प्रयत्न करा. ($s)';return s;}
 Future<void> _pdf(BuildContext c,int m,int y)async{final all=await PayrollDb.instance.employees(activeOnly:true);final tax=await PayrollDb.instance.taxSettings();final rows=all.map((r)=>calculate(r,tax,DateTime(y,m+1,0).day)).toList();final doc=pw.Document();doc.addPage(pw.MultiPage(build:(ctx)=>[pw.Header(level:0,child:pw.Text('Lasalgaon Gram Panchayat Payroll — $m/$y')),pw.Table.fromTextArray(headers:['No.','Name','Designation','Basic','Gross','Deductions','Net'],data:[for(var i=0;i<rows.length;i++)['${i+1}','${rows[i]['name_marathi']??''}','${rows[i]['designation']??''}','${n(rows[i]['basic']).toStringAsFixed(0)}','${n(rows[i]['gross']).toStringAsFixed(0)}','${n(rows[i]['deductions']).toStringAsFixed(0)}','${n(rows[i]['net']).toStringAsFixed(0)}']]) ]));await Printing.layoutPdf(onLayout:(_)=>doc.save());}
 Future<void> _backup(BuildContext c)async{final dir=await getApplicationDocumentsDirectory();final file=File('${dir.path}/payroll.db');if(await file.exists())await Share.shareXFiles([XFile(file.path)],text:'Payroll database backup');else if(c.mounted)ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content:Text('डेटाबेस अद्याप तयार नाही')));}
 
 class SettingsScreen extends StatefulWidget{const SettingsScreen({super.key});@override State<SettingsScreen> createState()=>_SettingsScreenState();}
-class _SettingsScreenState extends State<SettingsScreen>{@override Widget build(BuildContext c)=>ListView(padding:const EdgeInsets.all(16),children:[Text('सेटिंग्ज',style:Theme.of(c).textTheme.headlineSmall),Card(child:ListTile(leading:const Icon(Icons.receipt_long),title:const Text('व्यवसाय कर सेटिंग'),subtitle:const Text('मर्यादा आणि कर रक्कम'),onTap:()=>_tax(c))),Card(child:ListTile(leading:const Icon(Icons.lock_reset),title:const Text('पासवर्ड बदला'),onTap:()=>_password(c))),Card(child:ListTile(leading:const Icon(Icons.event_available),title:const Text('पदानुसार निवृत्ती वय'),subtitle:const Text('डीफॉल्ट निवृत्ती वय 60 वर्षे'),onTap:()=>_retirement(c))),Card(child:ListTile(leading:const Icon(Icons.upload_file),title:const Text('जुना डेटाबेस आयात'),subtitle:const Text('जुन्या payroll.db फाईलसाठी'),onTap:()=>_importDb(c))),const Padding(padding:EdgeInsets.all(12),child:Text('डेटा या Android डिव्हाइसवर स्थानिक SQLite डेटाबेसमध्ये साठवला जातो. भविष्यात multi-user वापरासाठी API/backend migration आवश्यक असेल.'))]);}
+class _SettingsScreenState extends State<SettingsScreen>{@override Widget build(BuildContext c)=>ListView(padding:const EdgeInsets.all(16),children:[Text('सेटिंग्ज',style:Theme.of(c).textTheme.headlineSmall),Card(child:ListTile(leading:const Icon(Icons.email_outlined),title:const Text('ईमेल / SMTP सेटिंग'),subtitle:const Text('Gmail App Password आणि प्राप्तकर्ता जतन करा'),trailing:const Icon(Icons.chevron_right),onTap:()=>_emailSettings(c))),Card(child:ListTile(leading:const Icon(Icons.receipt_long),title:const Text('व्यवसाय कर सेटिंग'),subtitle:const Text('मर्यादा आणि कर रक्कम'),onTap:()=>_tax(c))),Card(child:ListTile(leading:const Icon(Icons.lock_reset),title:const Text('पासवर्ड बदला'),onTap:()=>_password(c))),Card(child:ListTile(leading:const Icon(Icons.event_available),title:const Text('पदानुसार निवृत्ती वय'),subtitle:const Text('डीफॉल्ट निवृत्ती वय 60 वर्षे'),onTap:()=>_retirement(c))),Card(child:ListTile(leading:const Icon(Icons.upload_file),title:const Text('जुना डेटाबेस आयात'),subtitle:const Text('जुन्या payroll.db फाईलसाठी'),onTap:()=>_importDb(c))),const Padding(padding:EdgeInsets.all(12),child:Text('डेटा या Android डिव्हाइसवर स्थानिक SQLite डेटाबेसमध्ये साठवला जातो. भविष्यात multi-user वापरासाठी API/backend migration आवश्यक असेल.'))]);}
+Future<void> _emailSettings(BuildContext c) async {
+  final prefs = await SharedPreferences.getInstance();
+  const secure = FlutterSecureStorage();
+  final from = TextEditingController(text: prefs.getString('smtp_from_email') ?? '');
+  final to = TextEditingController(text: prefs.getString('smtp_to_email') ?? '');
+  final pass = TextEditingController();
+  var showPassword = false;
+  final configured = (await secure.read(key: 'smtp_app_password'))?.isNotEmpty ?? false;
+  if (!c.mounted) return;
+  await showDialog<void>(
+    context: c,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, setDialog) => AlertDialog(
+        title: const Text('ईमेल / SMTP सेटिंग'),
+        content: SizedBox(
+          width: 440,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Gmail SMTP', style: TextStyle(fontWeight: FontWeight.w800)),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: from,
+                  keyboardType: TextInputType.emailAddress,
+                  autocorrect: false,
+                  decoration: const InputDecoration(
+                    labelText: 'From — Gmail पत्ता',
+                    prefixIcon: Icon(Icons.alternate_email),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: to,
+                  keyboardType: TextInputType.emailAddress,
+                  autocorrect: false,
+                  decoration: const InputDecoration(
+                    labelText: 'To — अहवाल मिळणारा पत्ता',
+                    prefixIcon: Icon(Icons.mark_email_read_outlined),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: pass,
+                  obscureText: !showPassword,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  decoration: InputDecoration(
+                    labelText: configured ? 'नवीन App Password (बदलायचा असल्यास)' : 'Gmail App Password',
+                    helperText: configured
+                        ? 'रिक्त ठेवल्यास आधीचा password कायम राहील.'
+                        : '16-अक्षरी Gmail App Password टाका.',
+                    prefixIcon: const Icon(Icons.key_outlined),
+                    suffixIcon: IconButton(
+                      icon: Icon(showPassword ? Icons.visibility_off : Icons.visibility),
+                      onPressed: () => setDialog(() => showPassword = !showPassword),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Google Account मध्ये 2-Step Verification सुरू करून स्वतंत्र App Password तयार करा. नियमित Gmail खाते password येथे टाकू नका.',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('रद्द')),
+          FilledButton.icon(
+            onPressed: () async {
+              final f = from.text.trim();
+              final t = to.text.trim();
+              final pw = pass.text.replaceAll(' ', '').trim();
+              final valid = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+              if (!valid.hasMatch(f) || !valid.hasMatch(t)) {
+                ScaffoldMessenger.of(c).showSnackBar(
+                  const SnackBar(content: Text('योग्य From आणि To ईमेल पत्ते टाका.')),
+                );
+                return;
+              }
+              if (pw.isNotEmpty && pw.length < 16) {
+                ScaffoldMessenger.of(c).showSnackBar(
+                  const SnackBar(content: Text('Gmail App Password साधारण 16 अक्षरी असतो. योग्य App Password टाका.')),
+                );
+                return;
+              }
+              if (pw.isEmpty && !configured) {
+                ScaffoldMessenger.of(c).showSnackBar(
+                  const SnackBar(content: Text('पहिल्यांदा App Password आवश्यक आहे.')),
+                );
+                return;
+              }
+              await prefs.setString('smtp_from_email', f);
+              await prefs.setString('smtp_to_email', t);
+              if (pw.isNotEmpty) await secure.write(key: 'smtp_app_password', value: pw);
+              if (!c.mounted) return;
+              Navigator.pop(dialogContext);
+              ScaffoldMessenger.of(c).showSnackBar(
+                const SnackBar(content: Text('ईमेल सेटिंग सुरक्षितपणे जतन झाली. आता अहवालातून ईमेल पाठवा.')),
+              );
+            },
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('जतन करा'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
 Future<void> _tax(BuildContext c)async{final tax=await PayrollDb.instance.taxSettings();final keys=['threshold','below_amount','above_amount','women_amount'];final labels=['मूळ वेतन मर्यादा','मर्यादेखाली कर','मर्यादेवर/वर कर','महिला कर्मचारी कर'];final cs={for(final k in keys)k:TextEditingController(text:'${tax[k]}')};if(!c.mounted)return;await showDialog(context:c,builder:(d)=>AlertDialog(title:const Text('व्यवसाय कर सेटिंग'),content:Column(mainAxisSize:MainAxisSize.min,children:[for(var i=0;i<keys.length;i++)TextField(controller:cs[keys[i]],keyboardType:TextInputType.number,decoration:InputDecoration(labelText:labels[i]))]),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('रद्द')),FilledButton(onPressed:()async{await PayrollDb.instance.saveTax({for(final k in keys)k:double.tryParse(cs[k]!.text)??0});if(c.mounted){Navigator.pop(d);setState((){});}},child:const Text('जतन करा'))]));}
 Future<void> _password(BuildContext c)async{final old=TextEditingController(),next=TextEditingController(),confirm=TextEditingController();await showDialog(context:c,builder:(d)=>AlertDialog(title:const Text('पासवर्ड बदला'),content:Column(mainAxisSize:MainAxisSize.min,children:[TextField(controller:old,obscureText:true,decoration:const InputDecoration(labelText:'सध्याचा पासवर्ड')),TextField(controller:next,obscureText:true,decoration:const InputDecoration(labelText:'नवीन पासवर्ड')),TextField(controller:confirm,obscureText:true,decoration:const InputDecoration(labelText:'पुन्हा पासवर्ड'))]),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('रद्द')),FilledButton(onPressed:()async{if(!await PayrollDb.instance.verifyPassword(old.text)||next.text.length<8||next.text!=confirm.text){if(c.mounted)ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content:Text('सध्याचा पासवर्ड तपासा. नवीन पासवर्ड किमान 8 अक्षरांचा आणि जुळणारा असावा.')));return;}await PayrollDb.instance.savePassword(next.text);if(c.mounted)Navigator.pop(d);},child:const Text('बदला'))]));}
 Future<void> _retirement(BuildContext c)async{final rows=await PayrollDb.instance.employees(activeOnly:true);final names=rows.map((r)=>'${r['designation']??''}').where((s)=>s.isNotEmpty).toSet().toList();for(final name in names){final existing=await (await PayrollDb.instance.db).query('retirement_age_settings',where:'designation=?',whereArgs:[name]);final ctl=TextEditingController(text:existing.isEmpty?'60':'${existing.first['retirement_age']}');if(!c.mounted)return;await showDialog(context:c,builder:(d)=>AlertDialog(title:Text('$name — निवृत्ती वय'),content:TextField(controller:ctl,keyboardType:TextInputType.number,decoration:const InputDecoration(labelText:'वय (वर्षे)')),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('बंद')),FilledButton(onPressed:()async{await (await PayrollDb.instance.db).insert('retirement_age_settings',{'designation':name,'retirement_age':int.tryParse(ctl.text)??60},conflictAlgorithm:ConflictAlgorithm.replace);if(c.mounted)Navigator.pop(d);},child:const Text('जतन करा'))]));}}

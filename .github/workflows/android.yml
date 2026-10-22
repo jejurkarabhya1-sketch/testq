@@ -43,8 +43,34 @@ jobs:
           flutter --version
           java -version
 
+      - name: Ensure Android platform and internet permission
+        run: |
+          if [ ! -d android ]; then
+            flutter create --platforms=android --project-name lasalgaon_payroll .
+          fi
+          python3 - <<'PYCODE'
+          from pathlib import Path
+          manifest = Path('android/app/src/main/AndroidManifest.xml')
+          if not manifest.exists():
+              raise SystemExit(f'Android manifest not found: {manifest}')
+          text = manifest.read_text()
+          permission = '<uses-permission android:name="android.permission.INTERNET" />'
+          if 'android.permission.INTERNET' not in text:
+              marker = '<manifest'
+              start = text.find(marker)
+              end = text.find('>', start)
+              if start < 0 or end < 0:
+                  raise SystemExit('Could not find manifest opening tag')
+              text = text[:end + 1] + '\n    ' + permission + text[end + 1:]
+              manifest.write_text(text)
+          print('Android INTERNET permission is present.')
+          PYCODE
+
       - name: Resolve dependencies
         run: flutter pub get
+
+      - name: Analyze Flutter code
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Run Flutter tests
         run: flutter test
