@@ -43,3 +43,13 @@ This port is substantially more complete than the initial UI-only draft, but it 
 ## Future multi-user architecture
 
 Do not put a shared SQLite database on a network drive or sync a database file between phones. When multi-user access is needed, add a versioned authenticated REST API, server-side authorization, audit history, backup/restore, concurrency control and conflict resolution. Keep the same Dart repository interface so local SQLite can be replaced behind a repository/service layer.
+
+
+## Build repair update (2026-10-22)
+
+The prior GitHub Actions analyzer log showed a cascade of undefined screen classes and syntax errors beginning around `lib/main.dart` lines 29–43. The source has been patched by closing the affected class declarations and adding the missing `flutter_secure_storage` and `mailer` dependencies referenced by the UI. This is a source-level repair based on the provided log; Flutter/Dart is not installed in this workspace, so the repair has not been confirmed by a local analyzer run. Push this version and review the next GitHub Actions run. If it reports further errors, use the first error in the log (later errors may be cascading).
+
+
+## GitHub Actions syntax repair (Fix 2)
+
+This revision corrects missing class-closing braces in `lib/main.dart` that caused the analyzer to interpret screen classes as nested declarations. The fix is based on the GitHub Actions diagnostics supplied by the user. It has not been run through Flutter/Dart locally; the GitHub Actions analyzer remains the verification step.
