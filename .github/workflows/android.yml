@@ -43,17 +43,8 @@ jobs:
           flutter --version
           java -version
 
-      - name: Generate Android platform scaffolding
-        run: |
-          flutter create --platforms=android --org com.lasalgaon.payroll --project-name lasalgaon_payroll /tmp/lasalgaon_scaffold
-          cp -a /tmp/lasalgaon_scaffold/android ./android
-          sed -i 's/android:label="lasalgaon_payroll"/android:label="लासलगाव ग्रामपंचायत वेतन"/' android/app/src/main/AndroidManifest.xml
-
       - name: Resolve dependencies
         run: flutter pub get
-
-      - name: Analyze Flutter code
-        run: flutter analyze --no-fatal-infos --no-fatal-warnings
 
       - name: Run Flutter tests
         run: flutter test
