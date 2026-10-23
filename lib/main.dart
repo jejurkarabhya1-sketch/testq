@@ -103,7 +103,7 @@ class _GateState extends State<Gate> {
               SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: busy ? null : login, icon: busy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.lock_open_rounded), label: Text(busy ? 'तपासत आहे...' : 'सुरक्षित लॉगिन'))),
             ]))),
             const SizedBox(height: 16),
-            const Row(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.shield_outlined, size: 15, color: Color(0xFF77727A)), SizedBox(width: 6), Text('तुमचा डेटा या डिव्हाइसवरील स्थानिक डेटाबेसमध्ये', style: TextStyle(fontSize: 11, color: Color(0xFF77727A)))]),
+            const Wrap(alignment: WrapAlignment.center, crossAxisAlignment: WrapCrossAlignment.center, spacing: 6, runSpacing: 4, children: [Icon(Icons.shield_outlined, size: 15, color: Color(0xFF77727A)), Text('तुमचा डेटा या डिव्हाइसवरील स्थानिक डेटाबेसमध्ये', textAlign: TextAlign.center, style: TextStyle(fontSize: 11, color: Color(0xFF77727A)))]),
           ]),
         )))),
       ),
