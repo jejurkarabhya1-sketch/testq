@@ -355,7 +355,6 @@ Future<void> _edit(BuildContext context, Map<String, Object?> row) async {
   );
 }
 Future<void> _editEmployee(BuildContext context,Map<String,Object?> row)async{final fields={'gram_salary_account':'ग्रामनिधी Salary Account','gram_salary_ifsc':'ग्रामनिधी Salary IFSC','gram_ppf_account':'ग्रामनिधी PPF Account','gram_ppf_ifsc':'ग्रामनिधी PPF IFSC','water_salary_account':'पाणी पुरवठा Salary Account','water_salary_ifsc':'पाणी पुरवठा Salary IFSC','water_ppf_account':'पाणी पुरवठा PPF Account','water_ppf_ifsc':'पाणी पुरवठा PPF IFSC'};final cs={for(final k in fields.keys)k:TextEditingController(text:'${row[k]??''}')};await showDialog(context:context,builder:(d)=>AlertDialog(title:const Text('बँक खाते तपशील'),content:SizedBox(width:420,child:SingleChildScrollView(child:Column(children:fields.entries.map((e)=>TextField(controller:cs[e.key],decoration:InputDecoration(labelText:e.value))).toList()))),actions:[TextButton(onPressed:()=>Navigator.pop(d),child:const Text('रद्द')),FilledButton(onPressed:()async{await PayrollDb.instance.saveEmployee({...row,...{for(final k in fields.keys)k:cs[k]!.text}});if(context.mounted)Navigator.pop(d);},child:const Text('जतन करा'))]));}
-}
 
 class EmployeesScreen extends StatefulWidget {
   final VoidCallback refresh;
