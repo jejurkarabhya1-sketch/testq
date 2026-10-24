@@ -16,6 +16,8 @@ on:
 
 permissions:
   contents: read
+  pages: write
+  id-token: write
 
 jobs:
   validate:
@@ -91,13 +93,30 @@ jobs:
       - name: Resolve dependencies
         run: flutter pub get
       - name: Build release Web app
-        run: flutter build web --release
+        run: flutter build web --release --base-href /testq/
       - name: Package Web output
         run: zip -r flutter-web-build.zip build/web
-      - name: Upload Web artifact
+      - name: Upload Web build artifact for download
         uses: actions/upload-artifact@v4
         with:
           name: lasalgaon-payroll-flutter-web
           path: flutter-web-build.zip
           if-no-files-found: error
           retention-days: 30
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+
+  deploy-web:
+    name: Deploy Flutter Web to GitHub Pages
+    needs: build-web
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
