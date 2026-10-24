@@ -1,5 +1,5 @@
-import 'dart:convert';
 import 'dart:io';
+import 'dart:convert';
 import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
@@ -43,6 +43,94 @@ class PayrollDb {
   }
 
   Future<List<Map<String,Object?>>> employees({bool activeOnly=false}) async => (await db).query('employees', where: activeOnly ? 'is_active=1' : null, orderBy: 'department,sort_order,id');
+
+  // Month-wise snapshots: salary edits belong to the selected period, not to the
+  // permanent employee master record. Bank identity fields remain synchronized
+  // with the employee master as in the Python reference application.
+  Future<List<Map<String,Object?>>> periodRows(int month, int year) async {
+    if (month < 1 || month > 12 || year < 1900 || year > 2100) {
+      throw ArgumentError('Invalid payroll month/year');
+    }
+    final d = await db;
+    final days = DateTime(year, month + 1, 0).day;
+    final tax = await taxSettings();
+    final employeesNow = await employees();
+    await d.transaction((txn) async {
+      await txn.insert('payroll_periods', {'month': month, 'year': year},
+          conflictAlgorithm: ConflictAlgorithm.ignore);
+      final period = (await txn.query('payroll_periods', where: 'month=? AND year=?', whereArgs: [month, year])).first;
+      final periodId = period['id'] as int;
+      final existing = await txn.query('payroll_entries', where: 'period_id=?', whereArgs: [periodId]);
+      final savedIds = existing.map((r) => r['employee_id']).toSet();
+      for (final employee in employeesNow.where((e) => e['is_active'] == 1)) {
+        final id = employee['id'];
+        if (!savedIds.contains(id)) {
+          await txn.insert('payroll_entries', {
+            'period_id': periodId,
+            'employee_id': id,
+            'snapshot': jsonEncode(employee),
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        }
+      }
+    });
+    final period = (await d.query('payroll_periods', where: 'month=? AND year=?', whereArgs: [month, year])).first;
+    final saved = await d.query('payroll_entries', where: 'period_id=?', whereArgs: [period['id']]);
+    final currentById = <int, Map<String,Object?>>{
+      for (final e in employeesNow) (e['id'] as int): e,
+    };
+    const identityFields = [
+      'gram_salary_account','gram_salary_ifsc','gram_ppf_account','gram_ppf_ifsc',
+      'water_salary_account','water_salary_ifsc','water_ppf_account','water_ppf_ifsc',
+      'gender','dob'
+    ];
+    final result = <Map<String,Object?>>[];
+    for (final entry in saved) {
+      final raw = jsonDecode(entry['snapshot'] as String);
+      if (raw is! Map) continue;
+      final snapshot = Map<String,Object?>.from(raw);
+      final id = entry['employee_id'] as int;
+      final current = currentById[id];
+      if (current != null) {
+        for (final field in identityFields) {
+          snapshot[field] = current[field];
+        }
+      }
+      final computed = calculate(snapshot, tax, days);
+      result.add(computed);
+    }
+    result.sort((a,b) {
+      final ad = a['department'] == 'पाणी पुरवठा' ? 1 : 0;
+      final bd = b['department'] == 'पाणी पुरवठा' ? 1 : 0;
+      final dept = ad.compareTo(bd);
+      if (dept != 0) return dept;
+      final order = n(a['sort_order']).compareTo(n(b['sort_order']));
+      return order != 0 ? order : n(a['id']).compareTo(n(b['id']));
+    });
+    return result;
+  }
+
+  Future<void> savePeriodPatch(int employeeId, Map<String,Object?> patch, int month, int year) async {
+    const numericFields = {
+      'basic','leave_salary','substitution_salary','da','future_payable','recovery',
+      'recovery_days','loan','insurance','festival_advance','grain_advance','society','other'
+    };
+    if (patch.keys.any((k) => !numericFields.contains(k))) {
+      throw ArgumentError('Unsupported payroll field');
+    }
+    for (final value in patch.values) {
+      if (value is! num || !value.toDouble().isFinite) throw ArgumentError('Invalid numeric payroll value');
+    }
+    final rows = await periodRows(month, year);
+    final index = rows.indexWhere((r) => r['id'] == employeeId);
+    if (index < 0) throw StateError('Employee not found in selected payroll period');
+    final updated = Map<String,Object?>.from(rows[index])..addAll(patch);
+    final days = DateTime(year, month + 1, 0).day;
+    final calculated = calculate(updated, await taxSettings(), days);
+    final d = await db;
+    final period = (await d.query('payroll_periods', where: 'month=? AND year=?', whereArgs: [month, year])).first;
+    await d.update('payroll_entries', {'snapshot': jsonEncode(calculated)},
+        where: 'period_id=? AND employee_id=?', whereArgs: [period['id'], employeeId]);
+  }
   Future<int> saveEmployee(Map<String,Object?> v) async { final d=await db; const allowed={'name_marathi','name_english','designation','department','gender','dob','pay_scale','basic','leave_salary','substitution_salary','living_enabled','da','gp_enabled','future_payable','recovery','recovery_days','pf_employee','pf_employer','loan','professional_tax','insurance','festival_advance','grain_advance','society','other','account_number','ifsc','bank','branch','sort_order','is_active','gram_salary_account','gram_salary_ifsc','gram_ppf_account','gram_ppf_ifsc','water_salary_account','water_salary_ifsc','water_ppf_account','water_ppf_ifsc'}; final clean=<String,Object?>{for(final e in v.entries) if(allowed.contains(e.key)) e.key:e.value}; final id=v['id']; if(id==null) return d.insert('employees', clean); await d.update('employees',clean,where:'id=?',whereArgs:[id]); return id as int; }
   Future<void> deactivateEmployee(int id) async => (await db).update('employees',{'is_active':0},where:'id=?',whereArgs:[id]);
   Future<Map<String,Object?>> taxSettings() async => (await db).query('professional_tax_settings',limit:1).then((r)=>r.first);
@@ -59,7 +147,60 @@ class PayrollDb {
   Future<void> savePassword(String password) async { final d=await db; final salt=List<int>.generate(16, (_) => Random.secure().nextInt(256)); await d.insert('app_settings',{'key':'password_hash','value':'${base64Encode(salt)}:${sha256.convert([...salt,...utf8.encode(password)])}'},conflictAlgorithm:ConflictAlgorithm.replace); }
   Future<bool> verifyPassword(String password) async { final d=await db; final rows=await d.query('app_settings',where:'key=?',whereArgs:['password_hash']); if(rows.isEmpty)return password=='admin'; final bits=(rows.first['value'] as String).split(':'); final salt=base64Decode(bits[0]); return sha256.convert([...salt,...utf8.encode(password)]).toString()==bits[1]; }
   Future<String> databasePath() async { final dir=await getApplicationDocumentsDirectory(); return p.join(dir.path,'payroll.db'); }
-  Future<void> replaceDatabase(List<int> bytes) async { final path=await databasePath(); final old=_db; if(old!=null){await old.close();_db=null;} final file=File(path); if(await file.exists()) await file.copy('$path.backup'); await file.writeAsBytes(bytes,flush:true); try { final check=await openDatabase(path, readOnly:true); final tables=await check.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name='employees'"); await check.close(); if(tables.isEmpty) throw StateError('SQLite file does not contain payroll employee data'); await db; } catch(e) { if(await File('$path.backup').exists()) await File('$path.backup').copy(path); _db=null; rethrow; } }
+  Future<void> replaceDatabase(List<int> bytes) async {
+    final path = await databasePath();
+    if (bytes.length < 16 || String.fromCharCodes(bytes.take(15)) != 'SQLite format 3') {
+      throw const FormatException('Not a SQLite database');
+    }
+    final source = File(path);
+    final stagedPath = '$path.importing';
+    final staged = File(stagedPath);
+    if (await staged.exists()) await staged.delete();
+    await staged.writeAsBytes(bytes, flush: true);
+
+    // Validate the staged database before closing/replacing the live database.
+    Database? check;
+    try {
+      check = await openDatabase(stagedPath, readOnly: true);
+      final integrity = await check.rawQuery('PRAGMA integrity_check');
+      if (integrity.isEmpty || integrity.first.values.first != 'ok') {
+        throw StateError('SQLite integrity check failed');
+      }
+      final tables = (await check.rawQuery("SELECT name FROM sqlite_master WHERE type='table'"))
+          .map((r) => r['name'] as String).toSet();
+      const required = {'employees','payroll_periods','payroll_entries','daily_wage_employees','daily_wage_payroll','professional_tax_settings'};
+      if (!tables.containsAll(required)) {
+        throw StateError('Database is missing required payroll tables: ${required.difference(tables).join(', ')}');
+      }
+      final employeesCount = Sqflite.firstIntValue(await check.rawQuery('SELECT COUNT(*) FROM employees')) ?? 0;
+      if (employeesCount == 0) {
+        throw StateError('No employee records found. Import cancelled to protect current data.');
+      }
+    } catch (_) {
+      await check?.close();
+      if (await staged.exists()) await staged.delete();
+      rethrow;
+    }
+    await check!.close();
+
+    final old = _db;
+    if (old != null) { await old.close(); _db = null; }
+    final timestamp = DateTime.now().toUtc().toIso8601String().replaceAll(':','-');
+    final backupPath = '$path.backup.$timestamp';
+    try {
+      if (await source.exists()) await source.copy(backupPath);
+      await staged.copy(path);
+      _db = null;
+      // Reopen and verify after replacement; rollback from the preserved backup on failure.
+      await db;
+    } catch (e) {
+      if (await File(backupPath).exists()) await File(backupPath).copy(path);
+      _db = null;
+      rethrow;
+    } finally {
+      if (await staged.exists()) await staged.delete();
+    }
+  }
 }
 
 double n(Object? x) => x is num ? x.toDouble() : double.tryParse('$x') ?? 0;
