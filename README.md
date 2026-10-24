@@ -53,3 +53,8 @@ This is an initial Flutter port, **not yet a verified one-for-one replacement**.
 ## Data safety
 
 Test imports only with a backup first. Verify every employee, salary month, bank account, professional-tax setting, and daily-wage row after import. Never distribute an APK containing real payroll records.
+
+
+## Android and Web builds
+
+GitHub Actions workflow: `.github/workflows/build-android-web.yml`. On a successful run, download the `lasalgaon-payroll-android-apk` and `lasalgaon-payroll-flutter-web` artifacts from the Actions run. See `docs/DUAL_PLATFORM_BUILD_STATUS.md` for current Web compatibility limitations and release gates. The current source still contains native-only SQLite/filesystem APIs, so do not assume Web builds until the Web job succeeds and browser persistence/export tests pass.
